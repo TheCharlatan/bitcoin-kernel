@@ -1,486 +1,426 @@
-// Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2022 The Bitcoin Core developers
+// Copyright (c) 2018-present The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_CHAIN_H
-#define BITCOIN_CHAIN_H
+#ifndef BITCOIN_INTERFACES_CHAIN_H
+#define BITCOIN_INTERFACES_CHAIN_H
 
-#include <arith_uint256.h>
-#include <consensus/params.h>
-#include <flatfile.h>
-#include <kernel/cs_main.h>
-#include <primitives/block.h>
-#include <serialize.h>
-#include <sync.h>
-#include <uint256.h>
-#include <util/time.h>
+#include <blockfilter.h>
+#include <common/settings.h>
+#include <primitives/transaction.h>
+#include <util/result.h>
 
-#include <algorithm>
-#include <cassert>
+#include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <map>
+#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
-/**
- * Maximum amount of time that a block timestamp is allowed to exceed the
- * current time before the block will be accepted.
- */
-static constexpr int64_t MAX_FUTURE_BLOCK_TIME = 2 * 60 * 60;
+class ArgsManager;
+class CBlock;
+class CBlockUndo;
+class CFeeRate;
+class CRPCCommand;
+class CScheduler;
+class Coin;
+class uint256;
+enum class MemPoolRemovalReason;
+enum class RBFTransactionState;
+enum class ChainstateRole;
+struct bilingual_str;
+struct CBlockLocator;
+struct FeeCalculation;
+namespace node {
+struct NodeContext;
+} // namespace node
 
-/**
- * Timestamp window used as a grace period by code that compares external
- * timestamps (such as timestamps passed to RPCs, or wallet key creation times)
- * to block timestamps. This should be set at least as high as
- * MAX_FUTURE_BLOCK_TIME.
- */
-static constexpr int64_t TIMESTAMP_WINDOW = MAX_FUTURE_BLOCK_TIME;
+namespace interfaces {
 
-/**
- * Maximum gap between node time and block time used
- * for the "Catching up..." mode in GUI.
- *
- * Ref: https://github.com/bitcoin/bitcoin/pull/1026
- */
-static constexpr int64_t MAX_BLOCK_TIME_GAP = 90 * 60;
+class Handler;
+class Wallet;
 
-class CBlockFileInfo
+//! Helper for findBlock to selectively return pieces of block data. If block is
+//! found, data will be returned by setting specified output variables. If block
+//! is not found, output variables will keep their previous values.
+class FoundBlock
 {
 public:
-    unsigned int nBlocks{};      //!< number of blocks stored in file
-    unsigned int nSize{};        //!< number of used bytes of block file
-    unsigned int nUndoSize{};    //!< number of used bytes in the undo file
-    unsigned int nHeightFirst{}; //!< lowest height of block in file
-    unsigned int nHeightLast{};  //!< highest height of block in file
-    uint64_t nTimeFirst{};       //!< earliest time of block in file
-    uint64_t nTimeLast{};        //!< latest time of block in file
+    FoundBlock& hash(uint256& hash) { m_hash = &hash; return *this; }
+    FoundBlock& height(int& height) { m_height = &height; return *this; }
+    FoundBlock& time(int64_t& time) { m_time = &time; return *this; }
+    FoundBlock& maxTime(int64_t& max_time) { m_max_time = &max_time; return *this; }
+    FoundBlock& mtpTime(int64_t& mtp_time) { m_mtp_time = &mtp_time; return *this; }
+    //! Return whether block is in the active (most-work) chain.
+    FoundBlock& inActiveChain(bool& in_active_chain) { m_in_active_chain = &in_active_chain; return *this; }
+    //! Return locator if block is in the active chain.
+    FoundBlock& locator(CBlockLocator& locator) { m_locator = &locator; return *this; }
+    //! Return next block in the active chain if current block is in the active chain.
+    FoundBlock& nextBlock(const FoundBlock& next_block) { m_next_block = &next_block; return *this; }
+    //! Read block data from disk. If the block exists but doesn't have data
+    //! (for example due to pruning), the CBlock variable will be set to null.
+    FoundBlock& data(CBlock& data) { m_data = &data; return *this; }
 
-    SERIALIZE_METHODS(CBlockFileInfo, obj)
-    {
-        READWRITE(VARINT(obj.nBlocks));
-        READWRITE(VARINT(obj.nSize));
-        READWRITE(VARINT(obj.nUndoSize));
-        READWRITE(VARINT(obj.nHeightFirst));
-        READWRITE(VARINT(obj.nHeightLast));
-        READWRITE(VARINT(obj.nTimeFirst));
-        READWRITE(VARINT(obj.nTimeLast));
-    }
-
-    CBlockFileInfo() = default;
-
-    std::string ToString() const;
-
-    /** update statistics (does not update nSize) */
-    void AddBlock(unsigned int nHeightIn, uint64_t nTimeIn)
-    {
-        if (nBlocks == 0 || nHeightFirst > nHeightIn)
-            nHeightFirst = nHeightIn;
-        if (nBlocks == 0 || nTimeFirst > nTimeIn)
-            nTimeFirst = nTimeIn;
-        nBlocks++;
-        if (nHeightIn > nHeightLast)
-            nHeightLast = nHeightIn;
-        if (nTimeIn > nTimeLast)
-            nTimeLast = nTimeIn;
-    }
+    uint256* m_hash = nullptr;
+    int* m_height = nullptr;
+    int64_t* m_time = nullptr;
+    int64_t* m_max_time = nullptr;
+    int64_t* m_mtp_time = nullptr;
+    bool* m_in_active_chain = nullptr;
+    CBlockLocator* m_locator = nullptr;
+    const FoundBlock* m_next_block = nullptr;
+    CBlock* m_data = nullptr;
+    mutable bool found = false;
 };
 
-enum BlockStatus : uint32_t {
-    //! Unused.
-    BLOCK_VALID_UNKNOWN      =    0,
+//! Block data sent with blockConnected, blockDisconnected notifications.
+struct BlockInfo {
+    const uint256& hash;
+    const uint256* prev_hash = nullptr;
+    int height = -1;
+    int file_number = -1;
+    unsigned data_pos = 0;
+    const CBlock* data = nullptr;
+    const CBlockUndo* undo_data = nullptr;
+    // The maximum time in the chain up to and including this block.
+    // A timestamp that can only move forward.
+    unsigned int chain_time_max{0};
 
-    //! Reserved (was BLOCK_VALID_HEADER).
-    BLOCK_VALID_RESERVED     =    1,
-
-    //! All parent headers found, difficulty matches, timestamp >= median previous. Implies all parents
-    //! are also at least TREE.
-    BLOCK_VALID_TREE         =    2,
-
-    /**
-     * Only first tx is coinbase, 2 <= coinbase input script length <= 100, transactions valid, no duplicate txids,
-     * sigops, size, merkle root. Implies all parents are at least TREE but not necessarily TRANSACTIONS.
-     *
-     * If a block's validity is at least VALID_TRANSACTIONS, CBlockIndex::nTx will be set. If a block and all previous
-     * blocks back to the genesis block or an assumeutxo snapshot block are at least VALID_TRANSACTIONS,
-     * CBlockIndex::m_chain_tx_count will be set.
-     */
-    BLOCK_VALID_TRANSACTIONS =    3,
-
-    //! Outputs do not overspend inputs, no double spends, coinbase output ok, no immature coinbase spends, BIP30.
-    //! Implies all previous blocks back to the genesis block or an assumeutxo snapshot block are at least VALID_CHAIN.
-    BLOCK_VALID_CHAIN        =    4,
-
-    //! Scripts & signatures ok. Implies all previous blocks back to the genesis block or an assumeutxo snapshot block
-    //! are at least VALID_SCRIPTS.
-    BLOCK_VALID_SCRIPTS      =    5,
-
-    //! All validity bits.
-    BLOCK_VALID_MASK         =   BLOCK_VALID_RESERVED | BLOCK_VALID_TREE | BLOCK_VALID_TRANSACTIONS |
-                                 BLOCK_VALID_CHAIN | BLOCK_VALID_SCRIPTS,
-
-    BLOCK_HAVE_DATA          =    8, //!< full block available in blk*.dat
-    BLOCK_HAVE_UNDO          =   16, //!< undo data available in rev*.dat
-    BLOCK_HAVE_MASK          =   BLOCK_HAVE_DATA | BLOCK_HAVE_UNDO,
-
-    BLOCK_FAILED_VALID       =   32, //!< stage after last reached validness failed
-    BLOCK_FAILED_CHILD       =   64, //!< descends from failed block
-    BLOCK_FAILED_MASK        =   BLOCK_FAILED_VALID | BLOCK_FAILED_CHILD,
-
-    BLOCK_OPT_WITNESS        =   128, //!< block data in blk*.dat was received with a witness-enforcing client
-
-    BLOCK_STATUS_RESERVED    =   256, //!< Unused flag that was previously set on assumeutxo snapshot blocks and their
-                                      //!< ancestors before they were validated, and unset when they were validated.
+    BlockInfo(const uint256& hash LIFETIMEBOUND) : hash(hash) {}
 };
 
-/** The block chain is a tree shaped structure starting with the
- * genesis block at the root, with each block potentially having multiple
- * candidates to be the next block. A blockindex may have multiple pprev pointing
- * to it, but at most one of them can be part of the currently active branch.
- */
-class CBlockIndex
+//! The action to be taken after updating a settings value.
+//! WRITE indicates that the updated value must be written to disk,
+//! while SKIP_WRITE indicates that the change will be kept in memory-only
+//! without persisting it.
+enum class SettingsAction {
+    WRITE,
+    SKIP_WRITE
+};
+
+using SettingsUpdate = std::function<std::optional<interfaces::SettingsAction>(common::SettingsValue&)>;
+
+//! Interface giving clients (wallet processes, maybe other analysis tools in
+//! the future) ability to access to the chain state, receive notifications,
+//! estimate fees, and submit transactions.
+//!
+//! TODO: Current chain methods are too low level, exposing too much of the
+//! internal workings of the bitcoin node, and not being very convenient to use.
+//! Chain methods should be cleaned up and simplified over time. Examples:
+//!
+//! * The initMessages() and showProgress() methods which the wallet uses to send
+//!   notifications to the GUI should go away when GUI and wallet can directly
+//!   communicate with each other without going through the node
+//!   (https://github.com/bitcoin/bitcoin/pull/15288#discussion_r253321096).
+//!
+//! * The handleRpc, registerRpcs, rpcEnableDeprecated methods and other RPC
+//!   methods can go away if wallets listen for HTTP requests on their own
+//!   ports instead of registering to handle requests on the node HTTP port.
+//!
+//! * Move fee estimation queries to an asynchronous interface and let the
+//!   wallet cache it, fee estimation being driven by node mempool, wallet
+//!   should be the consumer.
+//!
+//! * `guessVerificationProgress` and similar methods can go away if rescan
+//!   logic moves out of the wallet, and the wallet just requests scans from the
+//!   node (https://github.com/bitcoin/bitcoin/issues/11756)
+class Chain
 {
 public:
-    //! pointer to the hash of the block, if any. Memory is owned by this CBlockIndex
-    const uint256* phashBlock{nullptr};
+    virtual ~Chain() = default;
 
-    //! pointer to the index of the predecessor of this block
-    CBlockIndex* pprev{nullptr};
+    //! Get current chain height, not including genesis block (returns 0 if
+    //! chain only contains genesis block, nullopt if chain does not contain
+    //! any blocks)
+    virtual std::optional<int> getHeight() = 0;
 
-    //! pointer to the index of some further predecessor of this block
-    CBlockIndex* pskip{nullptr};
+    //! Get block hash. Height must be valid or this function will abort.
+    virtual uint256 getBlockHash(int height) = 0;
 
-    //! height of the entry in the chain. The genesis block has height 0
-    int nHeight{0};
+    //! Check that the block is available on disk (i.e. has not been
+    //! pruned), and contains transactions.
+    virtual bool haveBlockOnDisk(int height) = 0;
 
-    //! Which # file this block is stored in (blk?????.dat)
-    int nFile GUARDED_BY(::cs_main){0};
+    //! Get locator for the current chain tip.
+    virtual CBlockLocator getTipLocator() = 0;
 
-    //! Byte offset within blk?????.dat where this block's data is stored
-    unsigned int nDataPos GUARDED_BY(::cs_main){0};
+    //! Return a locator that refers to a block in the active chain.
+    //! If specified block is not in the active chain, return locator for the latest ancestor that is in the chain.
+    virtual CBlockLocator getActiveChainLocator(const uint256& block_hash) = 0;
 
-    //! Byte offset within rev?????.dat where this block's undo data is stored
-    unsigned int nUndoPos GUARDED_BY(::cs_main){0};
+    //! Return height of the highest block on chain in common with the locator,
+    //! which will either be the original block used to create the locator,
+    //! or one of its ancestors.
+    virtual std::optional<int> findLocatorFork(const CBlockLocator& locator) = 0;
 
-    //! (memory only) Total amount of work (expected number of hashes) in the chain up to and including this block
-    arith_uint256 nChainWork{};
+    //! Returns whether a block filter index is available.
+    virtual bool hasBlockFilterIndex(BlockFilterType filter_type) = 0;
 
-    //! Number of transactions in this block. This will be nonzero if the block
-    //! reached the VALID_TRANSACTIONS level, and zero otherwise.
-    //! Note: in a potential headers-first mode, this number cannot be relied upon
-    unsigned int nTx{0};
+    //! Returns whether any of the elements match the block via a BIP 157 block filter
+    //! or std::nullopt if the block filter for this block couldn't be found.
+    virtual std::optional<bool> blockFilterMatchesAny(BlockFilterType filter_type, const uint256& block_hash, const GCSFilter::ElementSet& filter_set) = 0;
 
-    //! (memory only) Number of transactions in the chain up to and including this block.
-    //! This value will be non-zero if this block and all previous blocks back
-    //! to the genesis block or an assumeutxo snapshot block have reached the
-    //! VALID_TRANSACTIONS level.
-    uint64_t m_chain_tx_count{0};
+    //! Return whether node has the block and optionally return block metadata
+    //! or contents.
+    virtual bool findBlock(const uint256& hash, const FoundBlock& block={}) = 0;
 
-    //! Verification status of this block. See enum BlockStatus
-    //!
-    //! Note: this value is modified to show BLOCK_OPT_WITNESS during UTXO snapshot
-    //! load to avoid a spurious startup failure requiring -reindex.
-    //! @sa NeedsRedownload
-    //! @sa ActivateSnapshot
-    uint32_t nStatus GUARDED_BY(::cs_main){0};
+    //! Find first block in the chain with timestamp >= the given time
+    //! and height >= than the given height, return false if there is no block
+    //! with a high enough timestamp and height. Optionally return block
+    //! information.
+    virtual bool findFirstBlockWithTimeAndHeight(int64_t min_time, int min_height, const FoundBlock& block={}) = 0;
 
-    //! block header
-    int32_t nVersion{0};
-    uint256 hashMerkleRoot{};
-    uint32_t nTime{0};
-    uint32_t nBits{0};
-    uint32_t nNonce{0};
+    //! Find ancestor of block at specified height and optionally return
+    //! ancestor information.
+    virtual bool findAncestorByHeight(const uint256& block_hash, int ancestor_height, const FoundBlock& ancestor_out={}) = 0;
 
-    //! (memory only) Sequential id assigned to distinguish order in which blocks are received.
-    int32_t nSequenceId{0};
+    //! Return whether block descends from a specified ancestor, and
+    //! optionally return ancestor information.
+    virtual bool findAncestorByHash(const uint256& block_hash,
+        const uint256& ancestor_hash,
+        const FoundBlock& ancestor_out={}) = 0;
 
-    //! (memory only) Maximum nTime in the chain up to and including this block.
-    unsigned int nTimeMax{0};
+    //! Find most recent common ancestor between two blocks and optionally
+    //! return block information.
+    virtual bool findCommonAncestor(const uint256& block_hash1,
+        const uint256& block_hash2,
+        const FoundBlock& ancestor_out={},
+        const FoundBlock& block1_out={},
+        const FoundBlock& block2_out={}) = 0;
 
-    explicit CBlockIndex(const CBlockHeader& block)
-        : nVersion{block.nVersion},
-          hashMerkleRoot{block.hashMerkleRoot},
-          nTime{block.nTime},
-          nBits{block.nBits},
-          nNonce{block.nNonce}
+    //! Look up unspent output information. Returns coins in the mempool and in
+    //! the current chain UTXO set. Iterates through all the keys in the map and
+    //! populates the values.
+    virtual void findCoins(std::map<COutPoint, Coin>& coins) = 0;
+
+    //! Estimate fraction of total transactions verified if blocks up to
+    //! the specified block hash are verified.
+    virtual double guessVerificationProgress(const uint256& block_hash) = 0;
+
+    //! Return true if data is available for all blocks in the specified range
+    //! of blocks. This checks all blocks that are ancestors of block_hash in
+    //! the height range from min_height to max_height, inclusive.
+    virtual bool hasBlocks(const uint256& block_hash, int min_height = 0, std::optional<int> max_height = {}) = 0;
+
+    //! Check if transaction is RBF opt in.
+    virtual RBFTransactionState isRBFOptIn(const CTransaction& tx) = 0;
+
+    //! Check if transaction is in mempool.
+    virtual bool isInMempool(const uint256& txid) = 0;
+
+    //! Check if transaction has descendants in mempool.
+    virtual bool hasDescendantsInMempool(const uint256& txid) = 0;
+
+    //! Transaction is added to memory pool, if the transaction fee is below the
+    //! amount specified by max_tx_fee, and broadcast to all peers if relay is set to true.
+    //! Return false if the transaction could not be added due to the fee or for another reason.
+    virtual bool broadcastTransaction(const CTransactionRef& tx,
+        const CAmount& max_tx_fee,
+        bool relay,
+        std::string& err_string) = 0;
+
+    //! Calculate mempool ancestor and descendant counts for the given transaction.
+    virtual void getTransactionAncestry(const uint256& txid, size_t& ancestors, size_t& descendants, size_t* ancestorsize = nullptr, CAmount* ancestorfees = nullptr) = 0;
+
+    //! For each outpoint, calculate the fee-bumping cost to spend this outpoint at the specified
+    //  feerate, including bumping its ancestors. For example, if the target feerate is 10sat/vbyte
+    //  and this outpoint refers to a mempool transaction at 3sat/vbyte, the bump fee includes the
+    //  cost to bump the mempool transaction to 10sat/vbyte (i.e. 7 * mempooltx.vsize). If that
+    //  transaction also has, say, an unconfirmed parent with a feerate of 1sat/vbyte, the bump fee
+    //  includes the cost to bump the parent (i.e. 9 * parentmempooltx.vsize).
+    //
+    //  If the outpoint comes from an unconfirmed transaction that is already above the target
+    //  feerate or bumped by its descendant(s) already, it does not need to be bumped. Its bump fee
+    //  is 0. Likewise, if any of the transaction's ancestors are already bumped by a transaction
+    //  in our mempool, they are not included in the transaction's bump fee.
+    //
+    //  Also supported is bump-fee calculation in the case of replacements. If an outpoint
+    //  conflicts with another transaction in the mempool, it is assumed that the goal is to replace
+    //  that transaction. As such, the calculation will exclude the to-be-replaced transaction, but
+    //  will include the fee-bumping cost. If bump fees of descendants of the to-be-replaced
+    //  transaction are requested, the value will be 0. Fee-related RBF rules are not included as
+    //  they are logically distinct.
+    //
+    //  Any outpoints that are otherwise unavailable from the mempool (e.g. UTXOs from confirmed
+    //  transactions or transactions not yet broadcast by the wallet) are given a bump fee of 0.
+    //
+    //  If multiple outpoints come from the same transaction (which would be very rare because
+    //  it means that one transaction has multiple change outputs or paid the same wallet using multiple
+    //  outputs in the same transaction) or have shared ancestry, the bump fees are calculated
+    //  independently, i.e. as if only one of them is spent. This may result in double-fee-bumping. This
+    //  caveat can be rectified per use of the sister-function CalculateCombinedBumpFee(…).
+    virtual std::map<COutPoint, CAmount> calculateIndividualBumpFees(const std::vector<COutPoint>& outpoints, const CFeeRate& target_feerate) = 0;
+
+    //! Calculate the combined bump fee for an input set per the same strategy
+    //  as in CalculateIndividualBumpFees(…).
+    //  Unlike CalculateIndividualBumpFees(…), this does not return individual
+    //  bump fees per outpoint, but a single bump fee for the shared ancestry.
+    //  The combined bump fee may be used to correct overestimation due to
+    //  shared ancestry by multiple UTXOs after coin selection.
+    virtual std::optional<CAmount> calculateCombinedBumpFee(const std::vector<COutPoint>& outpoints, const CFeeRate& target_feerate) = 0;
+
+    //! Get the node's package limits.
+    //! Currently only returns the ancestor and descendant count limits, but could be enhanced to
+    //! return more policy settings.
+    virtual void getPackageLimits(unsigned int& limit_ancestor_count, unsigned int& limit_descendant_count) = 0;
+
+    //! Check if transaction will pass the mempool's chain limits.
+    virtual util::Result<void> checkChainLimits(const CTransactionRef& tx) = 0;
+
+    //! Estimate smart fee.
+    virtual CFeeRate estimateSmartFee(int num_blocks, bool conservative, FeeCalculation* calc = nullptr) = 0;
+
+    //! Fee estimator max target.
+    virtual unsigned int estimateMaxBlocks() = 0;
+
+    //! Mempool minimum fee.
+    virtual CFeeRate mempoolMinFee() = 0;
+
+    //! Relay current minimum fee (from -minrelaytxfee and -incrementalrelayfee settings).
+    virtual CFeeRate relayMinFee() = 0;
+
+    //! Relay incremental fee setting (-incrementalrelayfee), reflecting cost of relay.
+    virtual CFeeRate relayIncrementalFee() = 0;
+
+    //! Relay dust fee setting (-dustrelayfee), reflecting lowest rate it's economical to spend.
+    virtual CFeeRate relayDustFee() = 0;
+
+    //! Check if any block has been pruned.
+    virtual bool havePruned() = 0;
+
+    //! Get the current prune height.
+    virtual std::optional<int> getPruneHeight() = 0;
+
+    //! Check if the node is ready to broadcast transactions.
+    virtual bool isReadyToBroadcast() = 0;
+
+    //! Check if in IBD.
+    virtual bool isInitialBlockDownload() = 0;
+
+    //! Check if shutdown requested.
+    virtual bool shutdownRequested() = 0;
+
+    //! Send init message.
+    virtual void initMessage(const std::string& message) = 0;
+
+    //! Send init warning.
+    virtual void initWarning(const bilingual_str& message) = 0;
+
+    //! Send init error.
+    virtual void initError(const bilingual_str& message) = 0;
+
+    //! Send progress indicator.
+    virtual void showProgress(const std::string& title, int progress, bool resume_possible) = 0;
+
+    //! Chain notifications.
+    class Notifications
     {
-    }
+    public:
+        virtual ~Notifications() = default;
+        virtual void transactionAddedToMempool(const CTransactionRef& tx) {}
+        virtual void transactionRemovedFromMempool(const CTransactionRef& tx, MemPoolRemovalReason reason) {}
+        virtual void blockConnected(ChainstateRole role, const BlockInfo& block) {}
+        virtual void blockDisconnected(const BlockInfo& block) {}
+        virtual void updatedBlockTip() {}
+        virtual void chainStateFlushed(ChainstateRole role, const CBlockLocator& locator) {}
+    };
 
-    FlatFilePos GetBlockPos() const EXCLUSIVE_LOCKS_REQUIRED(::cs_main)
-    {
-        AssertLockHeld(::cs_main);
-        FlatFilePos ret;
-        if (nStatus & BLOCK_HAVE_DATA) {
-            ret.nFile = nFile;
-            ret.nPos = nDataPos;
-        }
-        return ret;
-    }
+    //! Register handler for notifications.
+    virtual std::unique_ptr<Handler> handleNotifications(std::shared_ptr<Notifications> notifications) = 0;
 
-    FlatFilePos GetUndoPos() const EXCLUSIVE_LOCKS_REQUIRED(::cs_main)
-    {
-        AssertLockHeld(::cs_main);
-        FlatFilePos ret;
-        if (nStatus & BLOCK_HAVE_UNDO) {
-            ret.nFile = nFile;
-            ret.nPos = nUndoPos;
-        }
-        return ret;
-    }
+    //! Wait for pending notifications to be processed unless block hash points to the current
+    //! chain tip.
+    virtual void waitForNotificationsIfTipChanged(const uint256& old_tip) = 0;
 
-    CBlockHeader GetBlockHeader() const
-    {
-        CBlockHeader block;
-        block.nVersion = nVersion;
-        if (pprev)
-            block.hashPrevBlock = pprev->GetBlockHash();
-        block.hashMerkleRoot = hashMerkleRoot;
-        block.nTime = nTime;
-        block.nBits = nBits;
-        block.nNonce = nNonce;
-        return block;
-    }
+    //! Register handler for RPC. Command is not copied, so reference
+    //! needs to remain valid until Handler is disconnected.
+    virtual std::unique_ptr<Handler> handleRpc(const CRPCCommand& command) = 0;
 
-    uint256 GetBlockHash() const
-    {
-        assert(phashBlock != nullptr);
-        return *phashBlock;
-    }
+    //! Check if deprecated RPC is enabled.
+    virtual bool rpcEnableDeprecated(const std::string& method) = 0;
 
-    /**
-     * Check whether this block and all previous blocks back to the genesis block or an assumeutxo snapshot block have
-     * reached VALID_TRANSACTIONS and had transactions downloaded (and stored to disk) at some point.
-     *
-     * Does not imply the transactions are consensus-valid (ConnectTip might fail)
-     * Does not imply the transactions are still stored on disk. (IsBlockPruned might return true)
-     *
-     * Note that this will be true for the snapshot base block, if one is loaded, since its m_chain_tx_count value will have
-     * been set manually based on the related AssumeutxoData entry.
-     */
-    bool HaveNumChainTxs() const { return m_chain_tx_count != 0; }
+    //! Run function after given number of seconds. Cancel any previous calls with same name.
+    virtual void rpcRunLater(const std::string& name, std::function<void()> fn, int64_t seconds) = 0;
 
-    NodeSeconds Time() const
-    {
-        return NodeSeconds{std::chrono::seconds{nTime}};
-    }
+    //! Get settings value.
+    virtual common::SettingsValue getSetting(const std::string& arg) = 0;
 
-    int64_t GetBlockTime() const
-    {
-        return (int64_t)nTime;
-    }
+    //! Get list of settings values.
+    virtual std::vector<common::SettingsValue> getSettingsList(const std::string& arg) = 0;
 
-    int64_t GetBlockTimeMax() const
-    {
-        return (int64_t)nTimeMax;
-    }
+    //! Return <datadir>/settings.json setting value.
+    virtual common::SettingsValue getRwSetting(const std::string& name) = 0;
 
-    static constexpr int nMedianTimeSpan = 11;
+    //! Updates a setting in <datadir>/settings.json.
+    //! Null can be passed to erase the setting. There is intentionally no
+    //! support for writing null values to settings.json.
+    //! Depending on the action returned by the update function, this will either
+    //! update the setting in memory or write the updated settings to disk.
+    virtual bool updateRwSetting(const std::string& name, const SettingsUpdate& update_function) = 0;
 
-    int64_t GetMedianTimePast() const
-    {
-        int64_t pmedian[nMedianTimeSpan];
-        int64_t* pbegin = &pmedian[nMedianTimeSpan];
-        int64_t* pend = &pmedian[nMedianTimeSpan];
+    //! Replace a setting in <datadir>/settings.json with a new value.
+    //! Null can be passed to erase the setting.
+    //! This method provides a simpler alternative to updateRwSetting when
+    //! atomically reading and updating the setting is not required.
+    virtual bool overwriteRwSetting(const std::string& name, common::SettingsValue value, SettingsAction action = SettingsAction::WRITE) = 0;
 
-        const CBlockIndex* pindex = this;
-        for (int i = 0; i < nMedianTimeSpan && pindex; i++, pindex = pindex->pprev)
-            *(--pbegin) = pindex->GetBlockTime();
+    //! Delete a given setting in <datadir>/settings.json.
+    //! This method provides a simpler alternative to overwriteRwSetting when
+    //! erasing a setting, for ease of use and readability.
+    virtual bool deleteRwSettings(const std::string& name, SettingsAction action = SettingsAction::WRITE) = 0;
 
-        std::sort(pbegin, pend);
-        return pbegin[(pend - pbegin) / 2];
-    }
+    //! Synchronously send transactionAddedToMempool notifications about all
+    //! current mempool transactions to the specified handler and return after
+    //! the last one is sent. These notifications aren't coordinated with async
+    //! notifications sent by handleNotifications, so out of date async
+    //! notifications from handleNotifications can arrive during and after
+    //! synchronous notifications from requestMempoolTransactions. Clients need
+    //! to be prepared to handle this by ignoring notifications about unknown
+    //! removed transactions and already added new transactions.
+    virtual void requestMempoolTransactions(Notifications& notifications) = 0;
 
-    std::string ToString() const;
+    //! Return true if an assumed-valid chain is in use.
+    virtual bool hasAssumedValidChain() = 0;
 
-    //! Check whether this block index entry is valid up to the passed validity level.
-    bool IsValid(enum BlockStatus nUpTo = BLOCK_VALID_TRANSACTIONS) const
-        EXCLUSIVE_LOCKS_REQUIRED(::cs_main)
-    {
-        AssertLockHeld(::cs_main);
-        assert(!(nUpTo & ~BLOCK_VALID_MASK)); // Only validity flags allowed.
-        if (nStatus & BLOCK_FAILED_MASK)
-            return false;
-        return ((nStatus & BLOCK_VALID_MASK) >= nUpTo);
-    }
-
-    //! Raise the validity level of this block index entry.
-    //! Returns true if the validity was changed.
-    bool RaiseValidity(enum BlockStatus nUpTo) EXCLUSIVE_LOCKS_REQUIRED(::cs_main)
-    {
-        AssertLockHeld(::cs_main);
-        assert(!(nUpTo & ~BLOCK_VALID_MASK)); // Only validity flags allowed.
-        if (nStatus & BLOCK_FAILED_MASK) return false;
-
-        if ((nStatus & BLOCK_VALID_MASK) < nUpTo) {
-            nStatus = (nStatus & ~BLOCK_VALID_MASK) | nUpTo;
-            return true;
-        }
-        return false;
-    }
-
-    //! Build the skiplist pointer for this entry.
-    void BuildSkip();
-
-    //! Efficiently find an ancestor of this block.
-    CBlockIndex* GetAncestor(int height);
-    const CBlockIndex* GetAncestor(int height) const;
-
-    CBlockIndex() = default;
-    ~CBlockIndex() = default;
-
-protected:
-    //! CBlockIndex should not allow public copy construction because equality
-    //! comparison via pointer is very common throughout the codebase, making
-    //! use of copy a footgun. Also, use of copies do not have the benefit
-    //! of simplifying lifetime considerations due to attributes like pprev and
-    //! pskip, which are at risk of becoming dangling pointers in a copied
-    //! instance.
-    //!
-    //! We declare these protected instead of simply deleting them so that
-    //! CDiskBlockIndex can reuse copy construction.
-    CBlockIndex(const CBlockIndex&) = default;
-    CBlockIndex& operator=(const CBlockIndex&) = delete;
-    CBlockIndex(CBlockIndex&&) = delete;
-    CBlockIndex& operator=(CBlockIndex&&) = delete;
+    //! Get internal node context. Useful for testing, but not
+    //! accessible across processes.
+    virtual node::NodeContext* context() { return nullptr; }
 };
 
-arith_uint256 GetBlockProof(const CBlockIndex& block);
-/** Return the time it would take to redo the work difference between from and to, assuming the current hashrate corresponds to the difficulty at tip, in seconds. */
-int64_t GetBlockProofEquivalentTime(const CBlockIndex& to, const CBlockIndex& from, const CBlockIndex& tip, const Consensus::Params&);
-/** Find the forking point between two chain tips. */
-const CBlockIndex* LastCommonAncestor(const CBlockIndex* pa, const CBlockIndex* pb);
-
-
-/** Used to marshal pointers into hashes for db storage. */
-class CDiskBlockIndex : public CBlockIndex
+//! Interface to let node manage chain clients (wallets, or maybe tools for
+//! monitoring and analysis in the future).
+class ChainClient
 {
-    /** Historically CBlockLocator's version field has been written to disk
-     * streams as the client version, but the value has never been used.
-     *
-     * Hard-code to the highest client version ever written.
-     * SerParams can be used if the field requires any meaning in the future.
-     **/
-    static constexpr int DUMMY_VERSION = 259900;
-
 public:
-    uint256 hashPrev;
+    virtual ~ChainClient() = default;
 
-    CDiskBlockIndex()
-    {
-        hashPrev = uint256();
-    }
+    //! Register rpcs.
+    virtual void registerRpcs() = 0;
 
-    explicit CDiskBlockIndex(const CBlockIndex* pindex) : CBlockIndex(*pindex)
-    {
-        hashPrev = (pprev ? pprev->GetBlockHash() : uint256());
-    }
+    //! Check for errors before loading.
+    virtual bool verify() = 0;
 
-    SERIALIZE_METHODS(CDiskBlockIndex, obj)
-    {
-        LOCK(::cs_main);
-        int _nVersion = DUMMY_VERSION;
-        READWRITE(VARINT_MODE(_nVersion, VarIntMode::NONNEGATIVE_SIGNED));
+    //! Load saved state.
+    virtual bool load() = 0;
 
-        READWRITE(VARINT_MODE(obj.nHeight, VarIntMode::NONNEGATIVE_SIGNED));
-        READWRITE(VARINT(obj.nStatus));
-        READWRITE(VARINT(obj.nTx));
-        if (obj.nStatus & (BLOCK_HAVE_DATA | BLOCK_HAVE_UNDO)) READWRITE(VARINT_MODE(obj.nFile, VarIntMode::NONNEGATIVE_SIGNED));
-        if (obj.nStatus & BLOCK_HAVE_DATA) READWRITE(VARINT(obj.nDataPos));
-        if (obj.nStatus & BLOCK_HAVE_UNDO) READWRITE(VARINT(obj.nUndoPos));
+    //! Start client execution and provide a scheduler.
+    virtual void start(CScheduler& scheduler) = 0;
 
-        // block header
-        READWRITE(obj.nVersion);
-        READWRITE(obj.hashPrev);
-        READWRITE(obj.hashMerkleRoot);
-        READWRITE(obj.nTime);
-        READWRITE(obj.nBits);
-        READWRITE(obj.nNonce);
-    }
+    //! Shut down client.
+    virtual void stop() = 0;
 
-    uint256 ConstructBlockHash() const
-    {
-        CBlockHeader block;
-        block.nVersion = nVersion;
-        block.hashPrevBlock = hashPrev;
-        block.hashMerkleRoot = hashMerkleRoot;
-        block.nTime = nTime;
-        block.nBits = nBits;
-        block.nNonce = nNonce;
-        return block.GetHash();
-    }
+    //! Set mock time.
+    virtual void setMockTime(int64_t time) = 0;
 
-    uint256 GetBlockHash() = delete;
-    std::string ToString() = delete;
+    //! Mock the scheduler to fast forward in time.
+    virtual void schedulerMockForward(std::chrono::seconds delta_seconds) = 0;
 };
 
-/** An in-memory indexed chain of blocks. */
-class CChain
-{
-private:
-    std::vector<CBlockIndex*> vChain;
+//! Return implementation of Chain interface.
+std::unique_ptr<Chain> MakeChain(node::NodeContext& node);
 
-public:
-    CChain() = default;
-    CChain(const CChain&) = delete;
-    CChain& operator=(const CChain&) = delete;
+} // namespace interfaces
 
-    /** Returns the index entry for the genesis block of this chain, or nullptr if none. */
-    CBlockIndex* Genesis() const
-    {
-        return vChain.size() > 0 ? vChain[0] : nullptr;
-    }
-
-    /** Returns the index entry for the tip of this chain, or nullptr if none. */
-    CBlockIndex* Tip() const
-    {
-        return vChain.size() > 0 ? vChain[vChain.size() - 1] : nullptr;
-    }
-
-    /** Returns the index entry at a particular height in this chain, or nullptr if no such height exists. */
-    CBlockIndex* operator[](int nHeight) const
-    {
-        if (nHeight < 0 || nHeight >= (int)vChain.size())
-            return nullptr;
-        return vChain[nHeight];
-    }
-
-    /** Efficiently check whether a block is present in this chain. */
-    bool Contains(const CBlockIndex* pindex) const
-    {
-        return (*this)[pindex->nHeight] == pindex;
-    }
-
-    /** Find the successor of a block in this chain, or nullptr if the given index is not found or is the tip. */
-    CBlockIndex* Next(const CBlockIndex* pindex) const
-    {
-        if (Contains(pindex))
-            return (*this)[pindex->nHeight + 1];
-        else
-            return nullptr;
-    }
-
-    /** Return the maximal height in the chain. Is equal to chain.Tip() ? chain.Tip()->nHeight : -1. */
-    int Height() const
-    {
-        return int(vChain.size()) - 1;
-    }
-
-    /** Set/initialize a chain with a given tip. */
-    void SetTip(CBlockIndex& block);
-
-    /** Return a CBlockLocator that refers to the tip in of this chain. */
-    CBlockLocator GetLocator() const;
-
-    /** Find the last common block between this chain and a block index entry. */
-    const CBlockIndex* FindFork(const CBlockIndex* pindex) const;
-
-    /** Find the earliest block with timestamp equal or greater than the given time and height equal or greater than the given height. */
-    CBlockIndex* FindEarliestAtLeast(int64_t nTime, int height) const;
-};
-
-/** Get a locator for a block index entry. */
-CBlockLocator GetLocator(const CBlockIndex* index);
-
-/** Construct a list of hash entries to put in a locator.  */
-std::vector<uint256> LocatorEntries(const CBlockIndex* index);
-
-#endif // BITCOIN_CHAIN_H
+#endif // BITCOIN_INTERFACES_CHAIN_H

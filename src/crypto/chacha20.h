@@ -5,11 +5,10 @@
 #ifndef BITCOIN_CRYPTO_CHACHA20_H
 #define BITCOIN_CRYPTO_CHACHA20_H
 
-#include <span.h>
-
 #include <array>
 #include <cstddef>
 #include <cstdlib>
+#include <span>
 #include <stdint.h>
 #include <utility>
 
