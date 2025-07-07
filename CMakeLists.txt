@@ -139,7 +139,7 @@ if(SANITIZERS)
 endif()
 target_link_options(sanitize_interface INTERFACE ${SANITIZER_LDFLAGS})
 
-option(BUILD_UTIL_CHAINSTATE "Build experimental bitcoin-chainstate executable." OFF)
+option(BUILD_UTIL_CHAINSTATE "Build experimental bitcoin-chainstate executable." ON)
 option(BUILD_KERNEL_LIB "Build experimental bitcoinkernel library." ${BUILD_UTIL_CHAINSTATE})
 
 option(REDUCE_EXPORTS "Attempt to reduce exported symbols in the resulting executables." OFF)
