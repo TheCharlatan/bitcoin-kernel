@@ -179,7 +179,6 @@ target_link_libraries(bitcoin_kernel
     leveldb
     secp256k1
     Boost::headers
-    $<TARGET_NAME_IF_EXISTS:USDT::headers>
     $<$<PLATFORM_ID:Windows>:ws2_32>
 )
 
@@ -209,7 +208,6 @@ target_link_libraries(bitcoinkernel
     leveldb
     secp256k1
     $<$<PLATFORM_ID:Windows>:bcrypt>
-    $<TARGET_NAME_IF_EXISTS:USDT::headers>
   PUBLIC
     Boost::headers
 )
