@@ -37,18 +37,6 @@
 #include <sys/utsname.h>
 #include <unistd.h>
 #endif
-#ifdef HAVE_SYSCTL
-#include <sys/sysctl.h>
-#if __has_include(<vm/vm_param.h>)
-#include <vm/vm_param.h>
-#endif
-#if __has_include(<sys/resources.h>)
-#include <sys/resources.h>
-#endif
-#if __has_include(<sys/vmmeter.h>)
-#include <sys/vmmeter.h>
-#endif
-#endif
 #if defined(HAVE_STRONG_GETAUXVAL)
 #include <sys/auxv.h>
 #endif
@@ -116,24 +104,6 @@ void AddPath(CSHA512& hasher, const char *path)
     if (stat(path, &sb) == 0) {
         hasher.Write((const unsigned char*)path, strlen(path) + 1);
         hasher << sb;
-    }
-}
-#endif
-
-#ifdef HAVE_SYSCTL
-template<int... S>
-void AddSysctl(CSHA512& hasher)
-{
-    int CTL[sizeof...(S)] = {S...};
-    unsigned char buffer[65536];
-    size_t siz = 65536;
-    int ret = sysctl(CTL, sizeof...(S), buffer, &siz, nullptr, 0);
-    if (ret == 0 || (ret == -1 && errno == ENOMEM)) {
-        hasher << sizeof(CTL);
-        hasher.Write((const unsigned char*)CTL, sizeof(CTL));
-        if (siz > sizeof(buffer)) siz = sizeof(buffer);
-        hasher << siz;
-        hasher.Write(buffer, siz);
     }
 }
 #endif
@@ -228,30 +198,6 @@ void RandAddDynamicEnv(CSHA512& hasher)
     AddFile(hasher, "/proc/stat");
     AddFile(hasher, "/proc/self/schedstat");
     AddFile(hasher, "/proc/self/status");
-#endif
-
-#ifdef HAVE_SYSCTL
-#  ifdef CTL_KERN
-#    if defined(KERN_PROC) && defined(KERN_PROC_ALL)
-    AddSysctl<CTL_KERN, KERN_PROC, KERN_PROC_ALL>(hasher);
-#    endif
-#  endif
-#  ifdef CTL_HW
-#    ifdef HW_DISKSTATS
-    AddSysctl<CTL_HW, HW_DISKSTATS>(hasher);
-#    endif
-#  endif
-#  ifdef CTL_VM
-#    ifdef VM_LOADAVG
-    AddSysctl<CTL_VM, VM_LOADAVG>(hasher);
-#    endif
-#    ifdef VM_TOTAL
-    AddSysctl<CTL_VM, VM_TOTAL>(hasher);
-#    endif
-#    ifdef VM_METER
-    AddSysctl<CTL_VM, VM_METER>(hasher);
-#    endif
-#  endif
 #endif
 
     // Stack and heap location
@@ -351,81 +297,6 @@ void RandAddStaticEnv(CSHA512& hasher)
     AddFile(hasher, "/etc/resolv.conf");
     AddFile(hasher, "/etc/timezone");
     AddFile(hasher, "/etc/localtime");
-#endif
-
-    // For MacOS/BSDs, gather data through sysctl instead of /proc. Not all of these
-    // will exist on every system.
-#ifdef HAVE_SYSCTL
-#  ifdef CTL_HW
-#    ifdef HW_MACHINE
-    AddSysctl<CTL_HW, HW_MACHINE>(hasher);
-#    endif
-#    ifdef HW_MODEL
-    AddSysctl<CTL_HW, HW_MODEL>(hasher);
-#    endif
-#    ifdef HW_NCPU
-    AddSysctl<CTL_HW, HW_NCPU>(hasher);
-#    endif
-#    ifdef HW_PHYSMEM
-    AddSysctl<CTL_HW, HW_PHYSMEM>(hasher);
-#    endif
-#    ifdef HW_USERMEM
-    AddSysctl<CTL_HW, HW_USERMEM>(hasher);
-#    endif
-#    ifdef HW_MACHINE_ARCH
-    AddSysctl<CTL_HW, HW_MACHINE_ARCH>(hasher);
-#    endif
-#    ifdef HW_REALMEM
-    AddSysctl<CTL_HW, HW_REALMEM>(hasher);
-#    endif
-#    ifdef HW_CPU_FREQ
-    AddSysctl<CTL_HW, HW_CPU_FREQ>(hasher);
-#    endif
-#    ifdef HW_BUS_FREQ
-    AddSysctl<CTL_HW, HW_BUS_FREQ>(hasher);
-#    endif
-#    ifdef HW_CACHELINE
-    AddSysctl<CTL_HW, HW_CACHELINE>(hasher);
-#    endif
-#  endif
-#  ifdef CTL_KERN
-#    ifdef KERN_BOOTFILE
-     AddSysctl<CTL_KERN, KERN_BOOTFILE>(hasher);
-#    endif
-#    ifdef KERN_BOOTTIME
-     AddSysctl<CTL_KERN, KERN_BOOTTIME>(hasher);
-#    endif
-#    ifdef KERN_CLOCKRATE
-     AddSysctl<CTL_KERN, KERN_CLOCKRATE>(hasher);
-#    endif
-#    ifdef KERN_HOSTID
-     AddSysctl<CTL_KERN, KERN_HOSTID>(hasher);
-#    endif
-#    ifdef KERN_HOSTUUID
-     AddSysctl<CTL_KERN, KERN_HOSTUUID>(hasher);
-#    endif
-#    ifdef KERN_HOSTNAME
-     AddSysctl<CTL_KERN, KERN_HOSTNAME>(hasher);
-#    endif
-#    ifdef KERN_OSRELDATE
-     AddSysctl<CTL_KERN, KERN_OSRELDATE>(hasher);
-#    endif
-#    ifdef KERN_OSRELEASE
-     AddSysctl<CTL_KERN, KERN_OSRELEASE>(hasher);
-#    endif
-#    ifdef KERN_OSREV
-     AddSysctl<CTL_KERN, KERN_OSREV>(hasher);
-#    endif
-#    ifdef KERN_OSTYPE
-     AddSysctl<CTL_KERN, KERN_OSTYPE>(hasher);
-#    endif
-#    ifdef KERN_POSIX1
-     AddSysctl<CTL_KERN, KERN_OSREV>(hasher);
-#    endif
-#    ifdef KERN_VERSION
-     AddSysctl<CTL_KERN, KERN_VERSION>(hasher);
-#    endif
-#  endif
 #endif
 
     // Env variables

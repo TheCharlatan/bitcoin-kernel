@@ -113,23 +113,6 @@ check_cxx_source_compiles("
   " HAVE_GETENTROPY_RAND
 )
 
-
-# - BSD sysctl()
-check_cxx_source_compiles("
-  #include <sys/types.h>
-  #include <sys/sysctl.h>
-
-  #ifdef __linux__
-  #error Don't use sysctl on Linux, it's deprecated even when it works
-  #endif
-
-  int main()
-  {
-    sysctl(nullptr, 2, nullptr, nullptr, nullptr, 0);
-  }
-  " HAVE_SYSCTL
-)
-
 # - BSD sysctl(KERN_ARND)
 check_cxx_source_compiles("
   #include <sys/types.h>
