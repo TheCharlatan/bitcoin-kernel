@@ -37,9 +37,6 @@ check_cxx_source_compiles("
   " STRERROR_R_CHAR_P
 )
 
-# Check for malloc_info (for memory statistics information in getmemoryinfo).
-check_cxx_symbol_exists(malloc_info "malloc.h" HAVE_MALLOC_INFO)
-
 # Check for mallopt(M_ARENA_MAX) (to set glibc arenas).
 check_cxx_source_compiles("
   #include <malloc.h>
