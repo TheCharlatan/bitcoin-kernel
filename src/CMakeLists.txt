@@ -106,7 +106,6 @@ add_library(bitcoin_kernel_util STATIC EXCLUDE_FROM_ALL
 target_link_libraries(bitcoin_kernel_util
   PRIVATE
     core_interface
-    bitcoin_clientversion
     bitcoin_crypto
     $<$<PLATFORM_ID:Windows>:ws2_32>
     $<$<PLATFORM_ID:Windows>:iphlpapi>
@@ -207,7 +206,6 @@ endforeach()
 target_link_libraries(bitcoinkernel
   PRIVATE
     core_interface
-    bitcoin_clientversion
     bitcoin_crypto
     leveldb
     secp256k1

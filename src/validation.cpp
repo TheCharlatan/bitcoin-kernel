@@ -10,7 +10,6 @@
 #include <arith_uint256.h>
 #include <chain.h>
 #include <checkqueue.h>
-#include <clientversion.h>
 #include <consensus/amount.h>
 #include <consensus/consensus.h>
 #include <consensus/merkle.h>
@@ -3891,7 +3890,7 @@ void ChainstateManager::ReceivedBlockTransactions(const CBlock& block, CBlockInd
     if (!Assume(pindexNew->m_chain_tx_count == 0 || pindexNew->m_chain_tx_count == prev_tx_sum(*pindexNew) ||
                 pindexNew == GetSnapshotBaseBlock())) {
         LogWarning("Internal bug detected: block %d has unexpected m_chain_tx_count %i that should be %i (%s %s). Please report this issue here: %s\n",
-            pindexNew->nHeight, pindexNew->m_chain_tx_count, prev_tx_sum(*pindexNew), CLIENT_NAME, FormatFullVersion(), CLIENT_BUGREPORT);
+            pindexNew->nHeight, pindexNew->m_chain_tx_count, prev_tx_sum(*pindexNew), CLIENT_NAME, CLIENT_VERSION_STRING, CLIENT_BUGREPORT);
         pindexNew->m_chain_tx_count = 0;
     }
     pindexNew->nFile = pos.nFile;
@@ -3919,7 +3918,7 @@ void ChainstateManager::ReceivedBlockTransactions(const CBlock& block, CBlockInd
             // incorrect hardcoded AssumeutxoData::m_chain_tx_count value.
             if (!Assume(pindex->m_chain_tx_count == 0 || pindex->m_chain_tx_count == prev_tx_sum(*pindex))) {
                 LogWarning("Internal bug detected: block %d has unexpected m_chain_tx_count %i that should be %i (%s %s). Please report this issue here: %s\n",
-                   pindex->nHeight, pindex->m_chain_tx_count, prev_tx_sum(*pindex), CLIENT_NAME, FormatFullVersion(), CLIENT_BUGREPORT);
+                   pindex->nHeight, pindex->m_chain_tx_count, prev_tx_sum(*pindex), CLIENT_NAME, CLIENT_VERSION_STRING, CLIENT_BUGREPORT);
             }
             pindex->m_chain_tx_count = prev_tx_sum(*pindex);
             pindex->nSequenceId = nBlockSequenceId++;
