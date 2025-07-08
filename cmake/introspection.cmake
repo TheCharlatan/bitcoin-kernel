@@ -29,17 +29,6 @@ check_cxx_source_compiles("
   " STRERROR_R_CHAR_P
 )
 
-# Check for mallopt(M_ARENA_MAX) (to set glibc arenas).
-check_cxx_source_compiles("
-  #include <malloc.h>
-
-  int main()
-  {
-    mallopt(M_ARENA_MAX, 1);
-  }
-  " HAVE_MALLOPT_ARENA_MAX
-)
-
 # Check for posix_fallocate().
 check_cxx_source_compiles("
   // same as in src/util/fs_helpers.cpp
