@@ -37,9 +37,6 @@
 #include <sys/utsname.h>
 #include <unistd.h>
 #endif
-#ifdef HAVE_IFADDRS
-#include <ifaddrs.h>
-#endif
 #ifdef HAVE_SYSCTL
 #include <sys/sysctl.h>
 #if __has_include(<vm/vm_param.h>)
@@ -324,23 +321,6 @@ void RandAddStaticEnv(CSHA512& hasher)
     if (gethostname(hname, 256) == 0) {
         hasher.Write((const unsigned char*)hname, strnlen(hname, 256));
     }
-#endif
-
-#ifdef HAVE_IFADDRS
-    // Network interfaces
-    struct ifaddrs *ifad = nullptr;
-    getifaddrs(&ifad);
-    struct ifaddrs *ifit = ifad;
-    while (ifit != nullptr) {
-        hasher.Write((const unsigned char*)&ifit, sizeof(ifit));
-        hasher.Write((const unsigned char*)ifit->ifa_name, strlen(ifit->ifa_name) + 1);
-        hasher.Write((const unsigned char*)&ifit->ifa_flags, sizeof(ifit->ifa_flags));
-        AddSockaddr(hasher, ifit->ifa_addr);
-        AddSockaddr(hasher, ifit->ifa_netmask);
-        AddSockaddr(hasher, ifit->ifa_dstaddr);
-        ifit = ifit->ifa_next;
-    }
-    freeifaddrs(ifad);
 #endif
 
 #ifndef WIN32
