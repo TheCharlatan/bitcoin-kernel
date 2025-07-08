@@ -65,6 +65,17 @@ set_target_properties(secp256k1 PROPERTIES
 )
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Set top-level target output locations.
+if(NOT CMAKE_RUNTIME_OUTPUT_DIRECTORY)
+  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
+endif()
+if(NOT CMAKE_LIBRARY_OUTPUT_DIRECTORY)
+  set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/lib)
+endif()
+if(NOT CMAKE_ARCHIVE_OUTPUT_DIRECTORY)
+  set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/lib)
+endif()
+
 add_subdirectory(crypto)
 
 add_library(bitcoin_kernel_util STATIC EXCLUDE_FROM_ALL
@@ -77,7 +88,6 @@ add_library(bitcoin_kernel_util STATIC EXCLUDE_FROM_ALL
   util/moneystr.cpp
   util/rbf.cpp
   util/readwritefile.cpp
-  util/serfloat.cpp
   util/syserror.cpp
   util/signalinterrupt.cpp
   util/strencodings.cpp
@@ -95,7 +105,6 @@ add_library(bitcoin_kernel_util STATIC EXCLUDE_FROM_ALL
 target_link_libraries(bitcoin_kernel_util
   PRIVATE
     core_interface
-    bitcoin_clientversion
     bitcoin_crypto
     $<$<PLATFORM_ID:Windows>:ws2_32>
     $<$<PLATFORM_ID:Windows>:iphlpapi>
@@ -170,7 +179,6 @@ target_link_libraries(bitcoin_kernel
     leveldb
     secp256k1
     Boost::headers
-    $<TARGET_NAME_IF_EXISTS:USDT::headers>
     $<$<PLATFORM_ID:Windows>:ws2_32>
 )
 
@@ -196,12 +204,10 @@ endforeach()
 target_link_libraries(bitcoinkernel
   PRIVATE
     core_interface
-    bitcoin_clientversion
     bitcoin_crypto
     leveldb
     secp256k1
     $<$<PLATFORM_ID:Windows>:bcrypt>
-    $<TARGET_NAME_IF_EXISTS:USDT::headers>
   PUBLIC
     Boost::headers
 )

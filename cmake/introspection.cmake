@@ -7,9 +7,7 @@ include(CheckCXXSymbolExists)
 
 check_cxx_symbol_exists(O_CLOEXEC "fcntl.h" HAVE_O_CLOEXEC)
 check_cxx_symbol_exists(fdatasync "unistd.h" HAVE_FDATASYNC)
-check_cxx_symbol_exists(fork "unistd.h" HAVE_DECL_FORK)
 check_cxx_symbol_exists(pipe2 "unistd.h" HAVE_DECL_PIPE2)
-check_cxx_symbol_exists(setsid "unistd.h" HAVE_DECL_SETSID)
 
 if(NOT WIN32)
   include(TestAppendRequiredLibraries)
@@ -18,14 +16,6 @@ endif()
 
 include(TestAppendRequiredLibraries)
 test_append_atomic_library(core_interface)
-
-# Even though ::system is part of the standard library, we still check
-# for it, to support building targets that don't have it, such as iOS.
-check_cxx_symbol_exists(std::system "cstdlib" HAVE_STD_SYSTEM)
-check_cxx_symbol_exists(::_wsystem "stdlib.h" HAVE__WSYSTEM)
-if(HAVE_STD_SYSTEM OR HAVE__WSYSTEM)
-  set(HAVE_SYSTEM 1)
-endif()
 
 check_cxx_source_compiles("
   #include <string.h>
@@ -37,20 +27,6 @@ check_cxx_source_compiles("
     (void)p;
   }
   " STRERROR_R_CHAR_P
-)
-
-# Check for malloc_info (for memory statistics information in getmemoryinfo).
-check_cxx_symbol_exists(malloc_info "malloc.h" HAVE_MALLOC_INFO)
-
-# Check for mallopt(M_ARENA_MAX) (to set glibc arenas).
-check_cxx_source_compiles("
-  #include <malloc.h>
-
-  int main()
-  {
-    mallopt(M_ARENA_MAX, 1);
-  }
-  " HAVE_MALLOPT_ARENA_MAX
 )
 
 # Check for posix_fallocate().
@@ -82,19 +58,6 @@ check_cxx_source_compiles("
   " HAVE_STRONG_GETAUXVAL
 )
 
-# Check for UNIX sockets.
-check_cxx_source_compiles("
-  #include <sys/socket.h>
-  #include <sys/un.h>
-
-  int main()
-  {
-    struct sockaddr_un addr;
-    addr.sun_family = AF_UNIX;
-  }
-  " HAVE_SOCKADDR_UN
-)
-
 # Check for different ways of gathering OS randomness:
 # - Linux getrandom()
 check_cxx_source_compiles("
@@ -116,23 +79,6 @@ check_cxx_source_compiles("
     getentropy(nullptr, 32);
   }
   " HAVE_GETENTROPY_RAND
-)
-
-
-# - BSD sysctl()
-check_cxx_source_compiles("
-  #include <sys/types.h>
-  #include <sys/sysctl.h>
-
-  #ifdef __linux__
-  #error Don't use sysctl on Linux, it's deprecated even when it works
-  #endif
-
-  int main()
-  {
-    sysctl(nullptr, 2, nullptr, nullptr, nullptr, 0);
-  }
-  " HAVE_SYSCTL
 )
 
 # - BSD sysctl(KERN_ARND)
