@@ -6,7 +6,6 @@
 #define BITCOIN_INTERFACES_CHAIN_H
 
 #include <blockfilter.h>
-#include <common/settings.h>
 #include <primitives/transaction.h>
 #include <util/result.h>
 
@@ -99,8 +98,6 @@ enum class SettingsAction {
     WRITE,
     SKIP_WRITE
 };
-
-using SettingsUpdate = std::function<std::optional<interfaces::SettingsAction>(common::SettingsValue&)>;
 
 //! Interface giving clients (wallet processes, maybe other analysis tools in
 //! the future) ability to access to the chain state, receive notifications,
@@ -343,33 +340,6 @@ public:
 
     //! Run function after given number of seconds. Cancel any previous calls with same name.
     virtual void rpcRunLater(const std::string& name, std::function<void()> fn, int64_t seconds) = 0;
-
-    //! Get settings value.
-    virtual common::SettingsValue getSetting(const std::string& arg) = 0;
-
-    //! Get list of settings values.
-    virtual std::vector<common::SettingsValue> getSettingsList(const std::string& arg) = 0;
-
-    //! Return <datadir>/settings.json setting value.
-    virtual common::SettingsValue getRwSetting(const std::string& name) = 0;
-
-    //! Updates a setting in <datadir>/settings.json.
-    //! Null can be passed to erase the setting. There is intentionally no
-    //! support for writing null values to settings.json.
-    //! Depending on the action returned by the update function, this will either
-    //! update the setting in memory or write the updated settings to disk.
-    virtual bool updateRwSetting(const std::string& name, const SettingsUpdate& update_function) = 0;
-
-    //! Replace a setting in <datadir>/settings.json with a new value.
-    //! Null can be passed to erase the setting.
-    //! This method provides a simpler alternative to updateRwSetting when
-    //! atomically reading and updating the setting is not required.
-    virtual bool overwriteRwSetting(const std::string& name, common::SettingsValue value, SettingsAction action = SettingsAction::WRITE) = 0;
-
-    //! Delete a given setting in <datadir>/settings.json.
-    //! This method provides a simpler alternative to overwriteRwSetting when
-    //! erasing a setting, for ease of use and readability.
-    virtual bool deleteRwSettings(const std::string& name, SettingsAction action = SettingsAction::WRITE) = 0;
 
     //! Synchronously send transactionAddedToMempool notifications about all
     //! current mempool transactions to the specified handler and return after
