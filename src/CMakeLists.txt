@@ -88,7 +88,6 @@ add_library(bitcoin_kernel_util STATIC EXCLUDE_FROM_ALL
   util/moneystr.cpp
   util/rbf.cpp
   util/readwritefile.cpp
-  util/serfloat.cpp
   util/syserror.cpp
   util/signalinterrupt.cpp
   util/strencodings.cpp
